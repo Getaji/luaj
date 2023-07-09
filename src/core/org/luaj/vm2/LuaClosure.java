@@ -91,6 +91,8 @@ public class LuaClosure extends LuaFunction {
 	public UpValue[] upValues;
 	
 	final Globals globals;
+
+	private LuaValue[] stackCache = null;
 	
 	/** Create a closure around a Prototype with a specific environment.
 	 * If the prototype has upvalues, the environment will be written into the first upvalue.
@@ -131,9 +133,11 @@ public class LuaClosure extends LuaFunction {
 	
 	private LuaValue[] getNewStack() {
 		int max = p.maxstacksize;
-		LuaValue[] stack = new LuaValue[max];
-		System.arraycopy(NILS, 0, stack, 0, max);
-		return stack;
+		if (stackCache == null || stackCache.length != max) {
+			stackCache = new LuaValue[max];
+		}
+		System.arraycopy(NILS, 0, stackCache, 0, max);
+		return stackCache;
 	}
 	
 	public final LuaValue call() {
