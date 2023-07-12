@@ -23,6 +23,8 @@ package org.luaj.vm2;
 
 import org.luaj.vm2.lib.DebugLib.CallFrame;
 
+import java.util.Stack;
+
 /**
  * Extension of {@link LuaFunction} which executes lua bytecode.
  * <p>
@@ -85,12 +87,16 @@ import org.luaj.vm2.lib.DebugLib.CallFrame;
  */
 public class LuaClosure extends LuaFunction {
 	private static final UpValue[] NOUPVALUES = new UpValue[0];
+
+	private static final int MAX_STACK_CACHE_SIZE = 20;
 	
 	public final Prototype p;
 
 	public UpValue[] upValues;
 	
 	final Globals globals;
+
+	private final Stack<LuaValue[]> freeStacks = new Stack<>();
 	
 	/** Create a closure around a Prototype with a specific environment.
 	 * If the prototype has upvalues, the environment will be written into the first upvalue.
@@ -131,41 +137,94 @@ public class LuaClosure extends LuaFunction {
 	
 	private LuaValue[] getNewStack() {
 		int max = p.maxstacksize;
-		LuaValue[] stack = new LuaValue[max];
+		LuaValue[] stack;
+		if (freeStacks.empty()) {
+			stack = new LuaValue[max];
+		} else {
+			stack = freeStacks.pop();
+			if (stack.length != max) {
+				stack = new LuaValue[max];
+			}
+		}
 		System.arraycopy(NILS, 0, stack, 0, max);
 		return stack;
+	}
+
+	private void releaseStack(LuaValue[] stack) {
+		if (freeStacks.size() < MAX_STACK_CACHE_SIZE) {
+			freeStacks.push(stack);
+		}
 	}
 	
 	public final LuaValue call() {
 		LuaValue[] stack = getNewStack();
-		return execute(stack,NONE).arg1();
+		LuaValue result = execute(stack, NONE).arg1();
+		releaseStack(stack);
+		return result;
 	}
 
 	public final LuaValue call(LuaValue arg) {
 		LuaValue[] stack = getNewStack();
+		LuaValue result;
 		switch ( p.numparams ) {
-		default: stack[0]=arg; return execute(stack,NONE).arg1();
-		case 0: return execute(stack,arg).arg1();
+			default:
+				stack[0]=arg;
+				result = execute(stack,NONE).arg1();
+				break;
+			case 0:
+				result = execute(stack,arg).arg1();
+				break;
 		}
+		releaseStack(stack);
+		return result;
 	}
 	
 	public final LuaValue call(LuaValue arg1, LuaValue arg2) {
 		LuaValue[] stack = getNewStack();
+		LuaValue result;
 		switch ( p.numparams ) {
-		default: stack[0]=arg1; stack[1]=arg2; return execute(stack,NONE).arg1();
-		case 1: stack[0]=arg1; return execute(stack,arg2).arg1();
-		case 0: return execute(stack,p.is_vararg!=0? varargsOf(arg1,arg2): NONE).arg1();
+			default:
+				stack[0]=arg1;
+				stack[1]=arg2;
+				result = execute(stack,NONE).arg1();
+				break;
+			case 1:
+				stack[0]=arg1;
+				result = execute(stack,arg2).arg1();
+				break;
+			case 0:
+				result = execute(stack,p.is_vararg!=0? varargsOf(arg1,arg2): NONE).arg1();
+				break;
 		}
+		releaseStack(stack);
+		return result;
 	}
 
 	public final LuaValue call(LuaValue arg1, LuaValue arg2, LuaValue arg3) {
 		LuaValue[] stack = getNewStack();
+		LuaValue result;
 		switch ( p.numparams ) {
-		default: stack[0]=arg1; stack[1]=arg2; stack[2]=arg3; return execute(stack,NONE).arg1();
-		case 2: stack[0]=arg1; stack[1]=arg2; return execute(stack,arg3).arg1();
-		case 1: stack[0]=arg1; return execute(stack,p.is_vararg!=0? varargsOf(arg2,arg3): NONE).arg1();
-		case 0: return execute(stack,p.is_vararg!=0? varargsOf(arg1,arg2,arg3): NONE).arg1();
+			default:
+				stack[0]=arg1;
+				stack[1]=arg2;
+				stack[2]=arg3;
+				result = execute(stack,NONE).arg1();
+				break;
+			case 2:
+				stack[0]=arg1;
+				stack[1]=arg2;
+				result = execute(stack,arg3).arg1();
+				break;
+			case 1:
+				stack[0]=arg1;
+				result = execute(stack,p.is_vararg!=0? varargsOf(arg2,arg3): NONE).arg1();
+				break;
+			case 0:
+				result = execute(stack,p.is_vararg!=0? varargsOf(arg1,arg2,arg3): NONE).arg1();
+				break;
 		}
+		releaseStack(stack);
+		return result;
 	}
 
 	public final Varargs invoke(Varargs varargs) {
@@ -176,7 +235,9 @@ public class LuaClosure extends LuaFunction {
 		LuaValue[] stack = getNewStack();
 		for ( int i=0; i<p.numparams; i++ )
 			stack[i] = varargs.arg(i+1);
-		return execute(stack,p.is_vararg!=0? varargs.subargs(p.numparams+1): NONE);
+		Varargs result = execute(stack,p.is_vararg!=0? varargs.subargs(p.numparams+1): NONE);
+		releaseStack(stack);
+		return result;
 	}
 	
 	protected Varargs execute( LuaValue[] stack, Varargs varargs ) {
